@@ -1,0 +1,3 @@
+add_library(script_interpreter INTERFACE)
+target_include_directories(script_interpreter INTERFACE include)
+target_link_libraries(script_interpreter INTERFACE core)

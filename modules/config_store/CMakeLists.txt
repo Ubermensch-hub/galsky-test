@@ -1,0 +1,3 @@
+add_library(config_store INTERFACE)
+target_include_directories(config_store INTERFACE include)
+target_link_libraries(config_store INTERFACE core)

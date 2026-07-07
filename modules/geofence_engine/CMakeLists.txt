@@ -1,0 +1,3 @@
+add_library(geofence_engine INTERFACE)
+target_include_directories(geofence_engine INTERFACE include)
+target_link_libraries(geofence_engine INTERFACE core)

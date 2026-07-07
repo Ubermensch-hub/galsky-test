@@ -1,0 +1,10 @@
+add_library(platform INTERFACE)
+target_include_directories(platform INTERFACE include)
+
+if(TRACKER_PLATFORM STREQUAL "desktop")
+    add_subdirectory(desktop)
+elseif(TRACKER_PLATFORM STREQUAL "mcu_stub")
+    add_subdirectory(mcu_stub)
+else()
+    message(FATAL_ERROR "Unknown TRACKER_PLATFORM '${TRACKER_PLATFORM}' (expected desktop or mcu_stub)")
+endif()

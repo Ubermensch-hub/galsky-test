@@ -1,0 +1,3 @@
+add_library(power_mgmt INTERFACE)
+target_include_directories(power_mgmt INTERFACE include)
+target_link_libraries(power_mgmt INTERFACE core)

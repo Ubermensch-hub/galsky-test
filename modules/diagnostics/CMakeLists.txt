@@ -1,0 +1,3 @@
+add_library(diagnostics INTERFACE)
+target_include_directories(diagnostics INTERFACE include)
+target_link_libraries(diagnostics INTERFACE core)
