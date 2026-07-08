@@ -1,7 +1,6 @@
 #pragma once
 
 #include "core/task.hpp"
-#include "platform/clock_hal.hpp"
 
 #include <cstdint>
 
@@ -21,14 +20,13 @@ public:
     SensorPollTask(ISampleSource& source, uint32_t period_ms)
         : source_(&source), period_ms_(period_ms) {}
 
-    void tick() override {
-        const uint32_t now = platform::now_ms();
+    void tick(uint32_t now_ms) override {
         if (!started_) {
             started_ = true;
-            next_due_ms_ = now;
+            next_due_ms_ = now_ms;
         }
         // Сравнение через знаковую разность корректно при переполнении uint32_t
-        if (static_cast<int32_t>(now - next_due_ms_) >= 0) {
+        if (static_cast<int32_t>(now_ms - next_due_ms_) >= 0) {
             last_ = source_->read();
             ++count_;
             // Фиксированная сетка периодов без накопления дрейфа

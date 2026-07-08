@@ -2,7 +2,6 @@
 
 #include "core/scheduler.hpp"
 #include "modules/sensors/sensors.hpp"
-#include "platform/clock_hal.hpp"
 
 namespace {
 
@@ -15,22 +14,51 @@ public:
 
 } // namespace
 
-TEST_CASE("SensorPollTask: опрос источника с заданным периодом") {
+TEST_CASE("SensorPollTask: выборки строго по сетке периодов") {
     CountingSource source;
     modules::sensors::SensorPollTask task(source, 10);
 
     core::Scheduler<4> scheduler;
     REQUIRE(scheduler.add_task(task));
 
-    // Модуль отсчитывает время сам через platform::now_ms(), поэтому тест вынужден гонять планировщик по реальным часам
-    const uint32_t start = platform::now_ms();
-    while (platform::now_ms() - start < 55) {
-        scheduler.run_once();
-    }
+    scheduler.run_once(1000);
+    CHECK(task.sample_count() == 1);
 
-    /* За ~55 мс при периоде 10 мс ожидаем ~6 выборок, но точное число зависит от загрузки машины и
-     * разрешения часов, поэтому проверяем вилкой, а не равенством */
-    CHECK(task.sample_count() >= 4);
-    CHECK(task.sample_count() <= 7);
+    scheduler.run_once(1005);
+    CHECK(task.sample_count() == 1);
+
+    scheduler.run_once(1010);
+    CHECK(task.sample_count() == 2);
+
+    scheduler.run_once(1019);
+    CHECK(task.sample_count() == 2);
+
+    scheduler.run_once(1025);
+    CHECK(task.sample_count() == 3);
+
+    scheduler.run_once(1030);
+    CHECK(task.sample_count() == 4);
+
     CHECK(task.last_sample() == task.sample_count());
+}
+
+TEST_CASE("SensorPollTask: период переживает переполнение uint32_t миллисекунд") {
+    CountingSource source;
+    modules::sensors::SensorPollTask task(source, 10);
+
+    core::Scheduler<4> scheduler;
+    REQUIRE(scheduler.add_task(task));
+
+    // ~49.7 суток аптайма: счётчик миллисекунд на пороге переворота
+    scheduler.run_once(0xFFFFFFFFu - 4);
+    CHECK(task.sample_count() == 1);
+
+    scheduler.run_once(0xFFFFFFFFu);
+    CHECK(task.sample_count() == 1);
+
+    scheduler.run_once(5u); // срок наступил после переворота счётчика
+    CHECK(task.sample_count() == 2);
+
+    scheduler.run_once(15u);
+    CHECK(task.sample_count() == 3);
 }

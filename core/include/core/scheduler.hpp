@@ -26,10 +26,12 @@ public:
         return true;
     }
 
-    // Один круг round-robin: каждая задача получает ровно один tick() в порядке регистрации
-    void run_once() {
+    /* Один круг round-robin: каждая задача получает ровно один tick() в порядке
+     * регистрации. Текущее время читает внешний цикл и подаёт сюда -- core не
+     зависит от часов платформы */
+    void run_once(uint32_t now_ms) {
         for (std::size_t i = 0; i < count_; ++i) {
-            tasks_[i]->tick();
+            tasks_[i]->tick(now_ms);
         }
     }
 

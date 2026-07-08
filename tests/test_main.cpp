@@ -9,15 +9,15 @@ namespace {
 
 class CountingTask : public core::ITask {
 public:
-    void tick() override { ++ticks; }
+    void tick(uint32_t) override { ++ticks; }
     int ticks = 0;
 };
 
 } // namespace
 
-TEST_CASE("ITask implementations can be ticked") {
+TEST_CASE("ITask: Реализации корректно работают") {
     CountingTask task;
-    task.tick();
-    task.tick();
+    task.tick(0);
+    task.tick(0);
     CHECK(task.ticks == 2);
 }
