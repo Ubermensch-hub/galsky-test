@@ -7,7 +7,9 @@ add_executable(unit_tests
     test_main.cpp
     core/test_ring_buffer.cpp
     core/test_scheduler.cpp
+    modules/test_sensors.cpp
 )
-target_link_libraries(unit_tests PRIVATE core doctest Threads::Threads)
+# platform_impl нужен тесту сенсоров: модуль сам читает часы платформы
+target_link_libraries(unit_tests PRIVATE core sensors platform_impl doctest Threads::Threads)
 
 add_test(NAME unit_tests COMMAND unit_tests)
