@@ -6,6 +6,7 @@ find_package(Threads REQUIRED)
 add_executable(unit_tests
     test_main.cpp
     core/test_ring_buffer.cpp
+    core/test_scheduler.cpp
 )
 target_link_libraries(unit_tests PRIVATE core doctest Threads::Threads)
 
