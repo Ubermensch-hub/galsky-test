@@ -12,7 +12,9 @@ add_executable(unit_tests
     modules/test_sensors.cpp
     modules/test_geofence.cpp
     modules/test_archive.cpp
+    modules/test_uplink.cpp
+    integration/test_end_to_end.cpp
 )
-target_link_libraries(unit_tests PRIVATE core sensors geofence_engine archive doctest Threads::Threads)
+target_link_libraries(unit_tests PRIVATE core sensors geofence_engine archive uplink doctest Threads::Threads)
 
 add_test(NAME unit_tests COMMAND unit_tests)

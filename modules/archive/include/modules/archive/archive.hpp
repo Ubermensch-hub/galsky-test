@@ -2,6 +2,7 @@
 
 #include "core/ring_buffer_overwrite.hpp"
 #include "core/task.hpp"
+#include "msg/record_source.hpp"
 #include "msg/topics.hpp"
 
 #include <cstddef>
@@ -14,7 +15,7 @@ namespace modules::archive {
 /* Кооперативная задача, которая превращает события в нумерованные записи и хранит их
 * в кольце с вытеснением старейших. Потребитель забирает записи pop_record() напрямую
  обе задачи живут в одном кооперативном контексте, синхронизация не нужна*/
-class ArchiveTask : public core::ITask {
+class ArchiveTask : public core::ITask, public msg::IRecordSource {
 public:
     static constexpr std::size_t kCapacity = 32;
 
@@ -35,7 +36,7 @@ public:
     }
 
     // Отдаёт старейшую запись
-    bool pop_record(msg::Record& out) { return ring_.pop(out); }
+    bool pop_record(msg::Record& out) override { return ring_.pop(out); }
 
     std::size_t size() const { return ring_.size(); }
 
