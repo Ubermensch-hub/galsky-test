@@ -25,4 +25,14 @@ struct ZoneEvent {
     uint32_t timestamp_ms;
 };
 
+enum class RecordKind : uint8_t { ZoneEvent = 0 };
+
+// Запись архива. Сквозную нумерацию присваивает архив
+// разрыв номеров у потребителя означает вытеснение записей при переполнении хранилища
+struct Record {
+    uint32_t seq;
+    RecordKind kind;
+    ZoneEvent event;
+};
+
 } // namespace msg
