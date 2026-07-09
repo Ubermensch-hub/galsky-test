@@ -18,6 +18,7 @@ set_property(CACHE TRACKER_PLATFORM PROPERTY STRINGS desktop mcu_stub)
 option(TRACKER_BUILD_TESTS "Build unit tests" ON)
 
 add_subdirectory(core)
+add_subdirectory(msg)
 add_subdirectory(platform)
 add_subdirectory(modules)
 add_subdirectory(app)
