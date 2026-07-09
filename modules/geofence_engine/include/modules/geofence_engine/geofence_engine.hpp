@@ -11,12 +11,14 @@
 // Модуль 4 - Движок геозон и событий (Геозоны, превышение скорости, пороговые значения)
 namespace modules::geofence_engine {
 
-// Круговая геозона. Планарное приближение: радиус в единицах 1e-7 градуса
+// Круговая геозона. Планарное приближение: радиус в единицах 1e-7 градуса.
+// hysteresis_e7 -- запас на шум приёмника
 struct Zone {
     int32_t center_lat_e7;
     int32_t center_lon_e7;
     uint32_t radius_e7;
     uint8_t id;
+    uint32_t hysteresis_e7; // 0 = чистый порог
 };
 
 // Кооперативная задача: вычитывает фиксы GPS, отслеживает переходы границ зон и публикует события.
@@ -58,23 +60,24 @@ private:
         State state;
     };
 
-    static bool contains(const Zone& zone, const msg::GpsFix& fix) {
+    static bool within(const Zone& zone, const msg::GpsFix& fix, int64_t radius) {
         const int64_t dlat = static_cast<int64_t>(fix.lat_e7) - zone.center_lat_e7;
         const int64_t dlon = static_cast<int64_t>(fix.lon_e7) - zone.center_lon_e7;
-        const int64_t radius = zone.radius_e7;
         return dlat * dlat + dlon * dlon <= radius * radius;
     }
 
     void process(Slot& slot, const msg::GpsFix& fix) {
-        const bool in = contains(slot.zone, fix);
+        const int64_t r_enter = slot.zone.radius_e7;
+        const int64_t r_exit = r_enter + slot.zone.hysteresis_e7;
         if (slot.state == State::Unknown) {
-            slot.state = in ? State::Inside : State::Outside;
+            slot.state = within(slot.zone, fix, r_enter) ? State::Inside : State::Outside;
             return;
         }
-        if (in && slot.state == State::Outside) {
+        // Между r_enter и r_exit -- мёртвая полоса: состояние не меняется
+        if (slot.state == State::Outside && within(slot.zone, fix, r_enter)) {
             slot.state = State::Inside;
             emit(slot.zone, fix, msg::ZoneEventType::Entered);
-        } else if (!in && slot.state == State::Inside) {
+        } else if (slot.state == State::Inside && !within(slot.zone, fix, r_exit)) {
             slot.state = State::Outside;
             emit(slot.zone, fix, msg::ZoneEventType::Exited);
         }

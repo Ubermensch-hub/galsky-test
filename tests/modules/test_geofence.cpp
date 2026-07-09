@@ -177,3 +177,46 @@ TEST_CASE("GeofenceTask: отказ при переполнении таблиц
     CHECK_FALSE(task.add_zone({0, 0, 1000, 99}));
     CHECK(task.zone_count() == GeofenceTask::kMaxZones);
 }
+ // Джиттер-тест
+TEST_CASE("GeofenceTask: дрожание фиксов у границы зоны не порождает спам событий") {
+    msg::GpsTopic gps;
+    msg::ZoneEventTopic events;
+    msg::GpsTopic::Subscription gps_sub;
+    msg::ZoneEventTopic::Subscription ev_sub;
+    REQUIRE(gps.subscribe(gps_sub));
+    REQUIRE(events.subscribe(ev_sub));
+
+    GeofenceTask task(std::move(gps_sub), events);
+    REQUIRE(task.add_zone({0, 0, 1000, 1, 300})); // гистерезис шире амплитуды дрожания
+
+    gps.publish(fix_at(5000, 0)); // инициализация: снаружи
+    task.tick(0);
+
+
+    const int32_t jitter[] = {995, 1120, 980, 1250, 1010, 1180, 990, 1290, 1005};
+    for (int32_t lat : jitter) {
+        gps.publish(fix_at(lat, 0));
+        task.tick(0);
+    }
+
+    // Ожидание: одно Entered при первом пересечении и никакого спама
+    int entered = 0;
+    int exited = 0;
+    msg::ZoneEvent event;
+    while (ev_sub.try_pop(event)) {
+        if (event.type == msg::ZoneEventType::Entered) {
+            ++entered;
+        } else {
+            ++exited;
+        }
+    }
+    CHECK(entered == 1);
+    CHECK(exited == 0);
+
+    // Настоящий выход
+    gps.publish(fix_at(1400, 0));
+    task.tick(0);
+    REQUIRE(ev_sub.try_pop(event));
+    CHECK(event.type == msg::ZoneEventType::Exited);
+    CHECK_FALSE(ev_sub.try_pop(event));
+}
