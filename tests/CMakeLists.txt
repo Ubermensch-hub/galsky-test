@@ -7,6 +7,7 @@ add_executable(unit_tests
     test_main.cpp
     core/test_ring_buffer.cpp
     core/test_scheduler.cpp
+    core/test_topic.cpp
     modules/test_sensors.cpp
 )
 target_link_libraries(unit_tests PRIVATE core sensors doctest Threads::Threads)
