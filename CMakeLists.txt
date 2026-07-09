@@ -9,6 +9,12 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "" FORCE)
 endif()
 
+# Исходники в UTF-8 (комментарии на русском): без явного флага MSVC читает
+# файлы в системной кодировке и может исказить литералы (C4819)
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 # Selects which HAL implementation is linked in for hardware-facing code. The portable
 # sources (core/, modules/) never branch on this or on the target platform -- CMake
 # alone decides which platform/*/*.cpp files get compiled in (see platform/CMakeLists.txt).
