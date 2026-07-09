@@ -1,3 +1,5 @@
+#include "ram_budget.hpp"
+
 #include "core/scheduler.hpp"
 #include "modules/archive/archive.hpp"
 #include "modules/diagnostics/diagnostics.hpp"
@@ -135,6 +137,28 @@ int main() {
                 platform::now_ms());
     std::printf("simulating 30 seconds, scheduler tick 100 ms\n\n");
 
+    const struct {
+        const char* name;
+        std::size_t size;
+    } ram_table[] = {
+        {"GpsTopic", sizeof(msg::GpsTopic)},
+        {"ZoneEventTopic", sizeof(msg::ZoneEventTopic)},
+        {"Scheduler<10>", sizeof(budget::SystemScheduler)},
+        {"GpsSimTask", sizeof(modules::gps::GpsSimTask)},
+        {"GeofenceTask", sizeof(modules::geofence_engine::GeofenceTask)},
+        {"ArchiveTask", sizeof(modules::archive::ArchiveTask)},
+        {"UplinkTask", sizeof(modules::uplink::UplinkTask)},
+        {"SensorPollTask", sizeof(modules::sensors::SensorPollTask)},
+        {"WatchdogTask", sizeof(modules::diagnostics::WatchdogTask)},
+    };
+    std::printf("static RAM footprint of system objects, bytes:\n");
+    for (const auto& row : ram_table) {
+        std::printf("  %-16s %5u\n", row.name, static_cast<unsigned>(row.size));
+    }
+    std::printf("  %-16s %5u of %u available (128K minus stack/runtime reserves)\n\n",
+                "total", static_cast<unsigned>(budget::kSystemFootprintBytes),
+                static_cast<unsigned>(budget::kModuleBudgetBytes));
+
     // Каналы системы
     msg::GpsTopic gps_topic;
     msg::ZoneEventTopic event_topic;
@@ -218,7 +242,7 @@ int main() {
 
     // Порядок регистрации повторяет поток данных: событие проходит
     // цепочку gps -> геозоны -> архив -> uplink за один круг
-    core::Scheduler<10> scheduler;
+    budget::SystemScheduler scheduler;
     const struct {
         core::ITask* task;
         const char* name;
