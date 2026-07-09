@@ -3,6 +3,7 @@
 #include "core/scheduler.hpp"
 #include "core/task.hpp"
 
+#include <string>
 #include <vector>
 
 namespace {
@@ -61,6 +62,25 @@ TEST_CASE("Scheduler: при переполнении таблицы add_task о
 
     scheduler.run_once(0);
     CHECK(log == std::vector<int>{1, 2});
+}
+
+TEST_CASE("Scheduler: считает тики и хранит имена задач") {
+    std::vector<int> log;
+    LoggingTask a(1, log);
+    LoggingTask b(2, log);
+
+    core::Scheduler<4> scheduler;
+    REQUIRE(scheduler.add_task(a, "alpha"));
+    REQUIRE(scheduler.add_task(b)); // имя по умолчанию -- пустое
+
+    scheduler.run_once(0);
+    scheduler.run_once(0);
+    scheduler.run_once(0);
+
+    CHECK(scheduler.task_ticks(0) == 3);
+    CHECK(scheduler.task_ticks(1) == 3);
+    CHECK(std::string(scheduler.task_name(0)) == "alpha");
+    CHECK(std::string(scheduler.task_name(1)).empty());
 }
 
 TEST_CASE("Scheduler: run_once передаёт задачам инжектированное время") {

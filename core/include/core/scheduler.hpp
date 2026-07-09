@@ -18,11 +18,12 @@ public:
     Scheduler& operator=(const Scheduler&) = delete;
 
 
-    bool add_task(ITask& task) {
+    // Строка должна жить дольше планировщика
+    bool add_task(ITask& task, const char* name = "") {
         if (count_ == MaxTasks) {
             return false;
         }
-        tasks_[count_++] = &task;
+        slots_[count_++] = {&task, name, 0};
         return true;
     }
 
@@ -31,15 +32,26 @@ public:
      зависит от часов платформы */
     void run_once(uint32_t now_ms) {
         for (std::size_t i = 0; i < count_; ++i) {
-            tasks_[i]->tick(now_ms);
+            slots_[i].task->tick(now_ms);
+            ++slots_[i].ticks;
         }
     }
 
     std::size_t task_count() const { return count_; }
     static constexpr std::size_t capacity() { return MaxTasks; }
 
+    // Статистика для диагностики, предусловие: i < task_count()
+    const char* task_name(std::size_t i) const { return slots_[i].name; }
+    uint32_t task_ticks(std::size_t i) const { return slots_[i].ticks; }
+
 private:
-    std::array<ITask*, MaxTasks> tasks_{};
+    struct Slot {
+        ITask* task;
+        const char* name;
+        uint32_t ticks;
+    };
+
+    std::array<Slot, MaxTasks> slots_{};
     std::size_t count_{0};
 };
 

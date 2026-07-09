@@ -1,5 +1,6 @@
 #include "core/scheduler.hpp"
 #include "modules/archive/archive.hpp"
+#include "modules/diagnostics/diagnostics.hpp"
 #include "modules/geofence_engine/geofence_engine.hpp"
 #include "modules/gps/gps.hpp"
 #include "modules/sensors/sensors.hpp"
@@ -99,24 +100,13 @@ private:
     bool started_{false};
 };
 
-// Диагностика-заглушка: печатает события геозон и сводку счётчиков
-class DiagStubTask : public core::ITask {
+// CAN-заглушка с имитацией отказа шины: на 15-й секунде счётчик кадров
+// замирает -- это должен поймать watchdog
+class FaultyCanTask : public core::ITask {
 public:
-    DiagStubTask(msg::ZoneEventTopic::Subscription&& events,
-                 const modules::archive::ArchiveTask& archive,
-                 const modules::uplink::UplinkTask& uplink,
-                 const modules::sensors::SensorPollTask& sensors, uint32_t period_ms)
-        : events_(static_cast<msg::ZoneEventTopic::Subscription&&>(events)),
-          archive_(&archive), uplink_(&uplink), sensors_(&sensors),
-          period_ms_(period_ms) {}
-
     void tick(uint32_t now_ms) override {
-        msg::ZoneEvent event;
-        while (events_.try_pop(event)) {
-            std::printf("[%6u ms] EVENT: %s %u (lat=%d)\n", now_ms,
-                        event.type == msg::ZoneEventType::Entered ? "entered zone"
-                                                                  : "exited zone",
-                        event.zone_id, event.lat_e7);
+        if (now_ms < 15000) {
+            ++frames_;
         }
         if (!started_) {
             started_ = true;
@@ -125,18 +115,14 @@ public:
         if (static_cast<int32_t>(now_ms - next_ms_) < 0) {
             return;
         }
-        next_ms_ += period_ms_;
-        std::printf("[%6u ms] diag: archive=%u packets=%u records=%u adc=%u\n", now_ms,
-                    static_cast<unsigned>(archive_->size()), uplink_->sent_packets(),
-                    uplink_->sent_records(), sensors_->last_sample());
+        next_ms_ += 4000;
+        std::printf("[%6u ms] can_bus: stub alive, frames=%u\n", now_ms, frames_);
     }
 
+    uint32_t frames() const { return frames_; }
+
 private:
-    msg::ZoneEventTopic::Subscription events_;
-    const modules::archive::ArchiveTask* archive_;
-    const modules::uplink::UplinkTask* uplink_;
-    const modules::sensors::SensorPollTask* sensors_;
-    uint32_t period_ms_;
+    uint32_t frames_{0};
     uint32_t next_ms_{0};
     bool started_{false};
 };
@@ -192,24 +178,57 @@ int main() {
     }
     ScriptStubTask script(static_cast<msg::GpsTopic::Subscription&&>(script_sub), 5000);
 
+    // События геозон читает и точка входа для немедленной печати в лог
     msg::ZoneEventTopic::Subscription diag_sub;
     if (!event_topic.subscribe(diag_sub)) {
         return 1;
     }
-    DiagStubTask diag(static_cast<msg::ZoneEventTopic::Subscription&&>(diag_sub),
-                      archive, uplink, sensors, 5000);
 
-    HeartbeatTask can_bus("can_bus", 4000);
+    FaultyCanTask can_bus;
     HeartbeatTask power_mgmt("power_mgmt", 6000);
     HeartbeatTask config_store("config_store", 8000);
+
+    // Watchdog: пробы прогресса модулей, о зависании сообщает колбэк
+    modules::diagnostics::WatchdogTask watchdog(
+        [](const char* name, uint32_t now_ms, void*) {
+            std::printf("[%6u ms] WATCHDOG: '%s' stalled!\n", now_ms, name);
+        },
+        nullptr);
+    const bool probes_ok =
+        watchdog.add_probe({"gps", 3000,
+                            [](const void* m) {
+                                return static_cast<const modules::gps::GpsSimTask*>(m)
+                                    ->published_fixes();
+                            },
+                            &gps}) &&
+        watchdog.add_probe({"sensors", 2000,
+                            [](const void* m) {
+                                return static_cast<const modules::sensors::SensorPollTask*>(m)
+                                    ->sample_count();
+                            },
+                            &sensors}) &&
+        watchdog.add_probe({"can_bus", 3000,
+                            [](const void* m) {
+                                return static_cast<const FaultyCanTask*>(m)->frames();
+                            },
+                            &can_bus});
+    if (!probes_ok) {
+        return 1;
+    }
 
     // Порядок регистрации повторяет поток данных: событие проходит
     // цепочку gps -> геозоны -> архив -> uplink за один круг
     core::Scheduler<10> scheduler;
-    core::ITask* tasks[] = {&gps,    &can_bus, &sensors,     &script, &geofence,
-                            &archive, &uplink,  &power_mgmt, &config_store, &diag};
-    for (core::ITask* task : tasks) {
-        if (!scheduler.add_task(*task)) {
+    const struct {
+        core::ITask* task;
+        const char* name;
+    } tasks[] = {{&gps, "gps"},           {&can_bus, "can_bus"},
+                 {&sensors, "sensors"},   {&script, "script"},
+                 {&geofence, "geofence"}, {&archive, "archive"},
+                 {&uplink, "uplink"},     {&power_mgmt, "power_mgmt"},
+                 {&config_store, "config_store"}, {&watchdog, "watchdog"}};
+    for (const auto& entry : tasks) {
+        if (!scheduler.add_task(*entry.task, entry.name)) {
             std::printf("error: task table full\n");
             return 1;
         }
@@ -220,6 +239,20 @@ int main() {
 
     for (uint32_t t = 0; t <= 30000; t += 100) {
         scheduler.run_once(t);
+
+        msg::ZoneEvent event;
+        while (diag_sub.try_pop(event)) {
+            std::printf("[%6u ms] EVENT: %s %u (lat=%d)\n", t,
+                        event.type == msg::ZoneEventType::Entered ? "entered zone"
+                                                                  : "exited zone",
+                        event.zone_id, event.lat_e7);
+        }
+        if (t % 5000 == 0) {
+            std::printf("[%6u ms] diag: archive=%u packets=%u adc=%u watchdog=%s\n", t,
+                        static_cast<unsigned>(archive.size()), uplink.sent_packets(),
+                        sensors.last_sample(),
+                        watchdog.system_healthy() ? "OK" : "STALLED");
+        }
     }
 
     std::printf("\n=== Summary ===\n");
@@ -231,5 +264,11 @@ int main() {
     std::printf("uplink: packets %u, records %u, link failures %u, pending %u\n",
                 uplink.sent_packets(), uplink.sent_records(), uplink.failed_sends(),
                 static_cast<unsigned>(uplink.pending_records()));
+    std::printf("watchdog: stall events %u, system %s\n", watchdog.stall_events(),
+                watchdog.system_healthy() ? "healthy" : "DEGRADED");
+    std::printf("\ntask            ticks\n");
+    for (std::size_t i = 0; i < scheduler.task_count(); ++i) {
+        std::printf("  %-14s %u\n", scheduler.task_name(i), scheduler.task_ticks(i));
+    }
     return 0;
 }
