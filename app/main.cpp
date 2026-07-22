@@ -1,4 +1,5 @@
 #include "ram_budget.hpp"
+#include "telemetry_publisher.hpp"
 
 #include "core/scheduler.hpp"
 #include "modules/archive/archive.hpp"
@@ -9,9 +10,11 @@
 #include "modules/uplink/uplink.hpp"
 #include "msg/topics.hpp"
 #include "platform/clock_hal.hpp"
+#include "platform/net_hal.hpp"
 
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 
 // Демонстрационный запуск: 10 задач в одном планировщике, сквозной сценарий
 // координата -> событие геозоны -> запись архива -> отправка на сервер.
@@ -107,12 +110,13 @@ private:
 class FaultyCanTask : public core::ITask {
 public:
     void tick(uint32_t now_ms) override {
-        if (now_ms < 15000) {
-            ++frames_;
-        }
         if (!started_) {
             started_ = true;
             next_ms_ = now_ms;
+            fail_at_ms_ = now_ms + 15000; // отказ через 15 с от старта, не от нуля часов
+        }
+        if (static_cast<int32_t>(now_ms - fail_at_ms_) < 0) {
+            ++frames_;
         }
         if (static_cast<int32_t>(now_ms - next_ms_) < 0) {
             return;
@@ -126,12 +130,19 @@ public:
 private:
     uint32_t frames_{0};
     uint32_t next_ms_{0};
+    uint32_t fail_at_ms_{0};
     bool started_{false};
+};
+
+// Мост из publisher в платформенный TCP-канал
+struct NetSink : demo::ITextSink {
+    bool send_line(const char* line) override { return platform::net_send_line(line); }
 };
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    const bool live = argc > 1 && std::strcmp(argv[1], "--live") == 0;
     std::printf("=== Tracker: framework demo ===\n");
     std::printf("platform clock at start: %u ms (implementation swapped at link time)\n",
                 platform::now_ms());
@@ -163,12 +174,21 @@ int main() {
     msg::GpsTopic gps_topic;
     msg::ZoneEventTopic event_topic;
 
-    // Приближение -> джиттер на границе -> перемещние внутрь -> выход за зону
+    // Приближение -> джиттер на границе -> перемещение внутрь -> выход за зону.
+    // Координаты реальные (Москва), чтобы дашборд рисовал маршрут на настоящей
+    // карте: зона радиусом 45000 ед. == ~0.0045 гр. == ~500 м
+    static constexpr int32_t kBaseLat = 557600000; // 55.76 гр. с.ш.
+    static constexpr int32_t kBaseLon = 376000000; // 37.60 гр. в.д.
     static constexpr modules::gps::Waypoint kPath[] = {
-        {6000, 0}, {4500, 0}, {3000, 0}, {1500, 0},
-        {1100, 0}, {950, 0},  {1250, 0}, {990, 0}, {1150, 0},
-        {300, 0},  {100, 0},  {0, 0},    {0, 0},
-        {800, 0},  {1600, 0}, {3000, 0}, {5000, 0},
+        {kBaseLat + 270000, kBaseLon}, {kBaseLat + 202500, kBaseLon},
+        {kBaseLat + 135000, kBaseLon}, {kBaseLat + 67500, kBaseLon},
+        {kBaseLat + 49500, kBaseLon},  {kBaseLat + 42750, kBaseLon},
+        {kBaseLat + 56250, kBaseLon},  {kBaseLat + 44550, kBaseLon},
+        {kBaseLat + 51750, kBaseLon},  {kBaseLat + 13500, kBaseLon},
+        {kBaseLat + 4500, kBaseLon},   {kBaseLat, kBaseLon},
+        {kBaseLat, kBaseLon},          {kBaseLat + 36000, kBaseLon},
+        {kBaseLat + 72000, kBaseLon},  {kBaseLat + 135000, kBaseLon},
+        {kBaseLat + 225000, kBaseLon},
     };
     modules::gps::GpsSimTask gps(gps_topic, kPath, sizeof(kPath) / sizeof(kPath[0]), 1000);
 
@@ -179,7 +199,7 @@ int main() {
     }
     modules::geofence_engine::GeofenceTask geofence(
         static_cast<msg::GpsTopic::Subscription&&>(geo_sub), event_topic);
-    if (!geofence.add_zone({0, 0, 1000, 1, 300})) {
+    if (!geofence.add_zone({kBaseLat, kBaseLon, 45000, 1, 13500})) {
         return 1;
     }
 
@@ -207,6 +227,18 @@ int main() {
     if (!event_topic.subscribe(diag_sub)) {
         return 1;
     }
+
+    // Телеметрия для дашборда: ещё два подписчика тех же топиков + TCP-канал.
+    // Publisher -- наблюдатель демо, тикается из главного цикла, не из планировщика
+    msg::GpsTopic::Subscription pub_gps;
+    msg::ZoneEventTopic::Subscription pub_events;
+    if (!gps_topic.subscribe(pub_gps) || !event_topic.subscribe(pub_events)) {
+        return 1;
+    }
+    NetSink net_sink;
+    demo::TelemetryPublisher publisher(
+        static_cast<msg::GpsTopic::Subscription&&>(pub_gps),
+        static_cast<msg::ZoneEventTopic::Subscription&&>(pub_events), net_sink);
 
     FaultyCanTask can_bus;
     HeartbeatTask power_mgmt("power_mgmt", 6000);
@@ -261,8 +293,41 @@ int main() {
                 static_cast<unsigned>(scheduler.task_count()),
                 static_cast<unsigned>(scheduler.capacity()));
 
+    // Живой режим для дашборда: реальное время, бесконечный цикл,
+    // NDJSON-стрим на tcp://127.0.0.1:45555
+    if (live) {
+        const bool net_ok = platform::net_listen(45555);
+        std::printf(net_ok ? "live mode: telemetry on tcp://127.0.0.1:45555 (NDJSON), "
+                             "Ctrl+C to stop\n\n"
+                           : "live mode: network unavailable, console only\n\n");
+        uint32_t next_diag_ms = platform::now_ms();
+        for (;;) {
+            const uint32_t now = platform::now_ms();
+            platform::net_poll();
+            scheduler.run_once(now);
+            publisher.tick(now);
+
+            msg::ZoneEvent event;
+            while (diag_sub.try_pop(event)) {
+                std::printf("[%6u ms] EVENT: %s %u (lat=%d)\n", now,
+                            event.type == msg::ZoneEventType::Entered ? "entered zone"
+                                                                      : "exited zone",
+                            event.zone_id, event.lat_e7);
+            }
+            if (static_cast<int32_t>(now - next_diag_ms) >= 0) {
+                next_diag_ms += 5000;
+                std::printf("[%6u ms] diag: archive=%u packets=%u adc=%u watchdog=%s\n",
+                            now, static_cast<unsigned>(archive.size()),
+                            uplink.sent_packets(), sensors.last_sample(),
+                            watchdog.system_healthy() ? "OK" : "STALLED");
+            }
+            platform::sleep_ms(50);
+        }
+    }
+
     for (uint32_t t = 0; t <= 30000; t += 100) {
         scheduler.run_once(t);
+        publisher.tick(t);
 
         msg::ZoneEvent event;
         while (diag_sub.try_pop(event)) {

@@ -8,4 +8,8 @@ uint32_t now_ms() {
     return fake_ticks++;
 }
 
+void sleep_ms(uint32_t) {
+    // на реальном МК здесь WFI/idle-режим
+}
+
 } // namespace platform

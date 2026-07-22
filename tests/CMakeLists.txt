@@ -16,7 +16,9 @@ add_executable(unit_tests
     modules/test_gps_sim.cpp
     modules/test_diagnostics.cpp
     integration/test_end_to_end.cpp
+    app/test_telemetry_publisher.cpp
 )
+target_include_directories(unit_tests PRIVATE ${CMAKE_SOURCE_DIR}/app)
 target_link_libraries(unit_tests PRIVATE core sensors geofence_engine archive uplink gps diagnostics doctest Threads::Threads)
 
 add_test(NAME unit_tests COMMAND unit_tests)
